@@ -105,7 +105,6 @@ class YouTubeDownloaderApp:
         )
 
     def _build_ui(self):
-        # Header
         header = tk.Frame(self.root, bg=BG_DARK)
         header.pack(fill="x", padx=24, pady=(20, 10))
 
@@ -137,7 +136,7 @@ class YouTubeDownloaderApp:
         )
         fetch_btn.pack(side="right")
 
-        # Preview Card (16:9 Landscape)
+        # Preview Card
         self.preview_card = tk.Frame(self.root, bg=BG_CARD, highlightthickness=1, highlightbackground=BORDER_GRAY)
         self.preview_card.pack(fill="x", padx=24, pady=8)
 
@@ -268,7 +267,6 @@ class YouTubeDownloaderApp:
                 'no_warnings': True,
                 'skip_download': True,
                 'extract_flat': False,
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}}
             }
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -328,7 +326,6 @@ class YouTubeDownloaderApp:
                 'outtmpl': os.path.join(out_folder, '%(title).80s [%(id)s].%(ext)s'),
                 'ffmpeg_location': FFMPEG_BIN,
                 'progress_hooks': [self._download_progress_hook],
-                'extractor_args': {'youtube': {'player_client': ['android', 'web']}},
                 'quiet': True,
                 'no_warnings': True,
             }
@@ -336,6 +333,9 @@ class YouTubeDownloaderApp:
             if mode == "mp3":
                 ydl_opts.update({
                     'format': 'bestaudio/best',
+                    # 'lang' first forces yt-dlp to prefer the ORIGINAL audio track
+                    # over YouTube's auto-dubbed "translated" tracks before comparing bitrate.
+                    'format_sort': ['lang', 'abr', 'br'],
                     'postprocessors': [{
                         'key': 'FFmpegExtractAudio',
                         'preferredcodec': 'mp3',
@@ -343,9 +343,22 @@ class YouTubeDownloaderApp:
                     }],
                 })
             else:
+                # bv*+ba/b grabs the highest resolution vertical stream regardless of codec
                 ydl_opts.update({
-                    'format': 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best[ext=mp4]/best',
+                    # Prefer H.264 (avc1) video when available. Many Shorts/high-res
+                    # uploads only exist in VP9/AV1 though, so this alone isn't enough.
+                    'format': 'bv*[vcodec^=avc1]+ba/bv*+ba/b',
                     'merge_output_format': 'mp4',
+                    # 'lang' first forces yt-dlp to prefer the ORIGINAL audio track
+                    # over YouTube's auto-dubbed "translated" tracks before comparing quality.
+                    'format_sort': ['lang', 'vcodec:h264', 'res:1080', 'fps', 'br'],
+                    # Force the merge step to ALWAYS transcode to H.264/AAC instead of
+                    # stream-copying whatever codec was downloaded. This is what actually
+                    # guarantees Premiere Pro compatibility even when only VP9/AV1 exists
+                    # upstream (common on Shorts). Takes longer than a plain remux.
+                    'postprocessor_args': {
+                        'merger': ['-c:v', 'libx264', '-preset', 'fast', '-crf', '18', '-c:a', 'aac', '-b:a', '192k']
+                    }
                 })
 
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
